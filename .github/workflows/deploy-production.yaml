@@ -1,0 +1,64 @@
+name: Deploy Vector & Update Env
+
+on:
+  push:
+    branches: [ "main" ] # ทำงานเมื่อมีการแก้ code ใน branch main
+    paths:
+      - 'config/vector/**'   # เฉพาะเมื่อแก้ Config Vector
+      - '.github/workflows/**'
+
+jobs:
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🚚 Copy Vector Config to Server
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "configs/vector/vector.yaml"
+        target: "/tmp/" # ส่งไปวางที่ tmp ก่อน (กันพัง)
+
+    - name: 🛠️ Apply Config & Update Env
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+
+          echo "🔐 Updating Environment Variables..."
+
+          # รีโหลด Systemd ให้รู้จักค่าใหม่
+          sudo systemctl daemon-reload
+
+          # ---------------------------------------------------
+          # ส่วนที่ 1: Validate และเปลี่ยนไฟล์ Config (Vector.yaml)
+          # ---------------------------------------------------
+          echo "🔍 Validating new config..."
+          
+          # ย้ายจาก tmp มาที่โฟลเดอร์ home เพื่อให้ user ปัจจุบันอ่านได้ง่ายขึ้นก่อน validate
+          mv /tmp/configs/vector/vector.yaml ./vector-new.yaml
+
+          echo "✅ Config OK. Applying changes..."
+          
+          # Backup ของเก่าไว้ก่อน (เผื่อพลาด)
+          sudo cp /etc/vector/vector.yaml /etc/vector/vector.yaml.bak
+
+          # เอาไฟล์ใหม่ไปทับของจริง
+          sudo mv ./vector-new.yaml /etc/vector/vector.yaml
+          
+          # ---------------------------------------------------
+          # ส่วนที่ 2: Restart Service
+          # ---------------------------------------------------
+          sudo systemctl restart vector
+          
+          # เช็คสถานะ
+          sudo systemctl status vector --no-pager
+          echo "🚀 Deployment Complete!"

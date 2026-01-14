@@ -1,0 +1,96 @@
+#                                    __   __  __
+#                                    \ \ / / / /
+#                                     \ V / / /
+#                                      \_/  \/
+#
+#                                    V E C T O R
+#                                   Configuration
+#
+# ------------------------------------------------------------------------------
+# Website: https://vector.dev
+# Docs: https://vector.dev/docs
+# Chat: https://chat.vector.dev
+# ------------------------------------------------------------------------------
+
+# Change this to use a non-default directory for Vector data storage:
+data_dir: /var/lib/vector
+
+sources:
+  wazuh_alerts:
+    type: file
+    include:
+      - /var/ossec/logs/alerts/alerts.json
+
+transforms:
+  parse_wazuh_json:
+    type: remap
+    inputs:
+      - wazuh_alerts
+    source: |
+      . = parse_json!(.message)
+
+  normalize_wazuh:
+    type: remap
+    inputs:
+      - parse_wazuh_json
+    source: |
+      .asdl = {}
+      .asdl.source = "wazuh"
+      .asdl.stage = "raw_alert"
+      .asdl.ingested_at = now()
+
+      .asdl.rule_id = .rule.id
+      .asdl.severity = .rule.level
+      .asdl.agent = .agent.name
+
+sinks:
+  to_wazuh_indexer:
+    type: "elasticsearch"
+    inputs: ["parse_wazuh_json"]
+    endpoints: ["https://127.0.0.1:9200"]
+    auth:
+      strategy: "basic"
+      user: "${WAZUH_USER}"     # ดึงจาก Env Var
+      password: "${WAZUH_PASSWORD}"    # ดึงจาก Env Var
+    tls:
+      ca_file: "/etc/vector/certs/root-ca.pem"
+      crt_file: "/etc/vector/certs/wazuh-server.pem"
+      key_file: "/etc/vector/certs/wazuh-server-key.pem"
+      verify_certificate: true
+    mode: "bulk"
+    bulk:
+      index: "wazuh-alerts-4.x-%Y.%m.%d"
+      action: "create"
+
+  debug_file:
+    type: file
+    inputs:
+      - normalize_wazuh
+    path: /var/log/vector/debug/vector-debug.log
+    encoding:
+      codec: json
+# test deploy
+#  null_sink:
+#    type: blackhole
+#    inputs:
+#      - normalize_wazuh
+#  quarantine_file:
+#    type: file
+#    inputs:
+#      - normalize_wazuh
+#    path: /var/log/vector/wazuh-asdl.json
+#    encoding:
+#      codec: json
+
+#  debug_console:
+#    type: console
+#    inputs:
+#      - normalize_wazuh
+#    encoding:
+#      codec: json
+# ------------------------------------------------------------------------------
+# API (Optional)
+# ------------------------------------------------------------------------------
+# api:
+#   enabled: true
+#   address: "127.0.0.1:8686"
